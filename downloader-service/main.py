@@ -62,6 +62,11 @@ PROXY_PASSWORD = os.getenv("PROXY_PASSWORD", "").strip()
 PROXY_HOST = os.getenv("PROXY_HOST", "").strip()
 PROXY_LIST_URL = os.getenv("PROXY_LIST_URL", "").strip()
 PROXY_CACHE_TTL = _env_int("PROXY_CACHE_TTL", 300)
+PROXY_FOR_SERVICES = [
+    s.strip().lower()
+    for s in os.getenv("PROXY_FOR_SERVICES", "instagram").split(",")
+    if s.strip()
+]
 VISOLIX_API_KEY = os.getenv("VISOLIX_API_KEY", "").strip()
 VISOLIX_LICENSE_CODE = os.getenv("VISOLIX_LICENSE_CODE", "").strip()
 VISOLIX_CLIENT_NAME = os.getenv("VISOLIX_CLIENT_NAME", "").strip()
@@ -491,6 +496,26 @@ def _is_instagram_url(url: str) -> bool:
     return host.endswith("instagram.com") or host.endswith("instagr.am")
 
 
+def _is_youtube_url(url: str) -> bool:
+    try:
+        host = (urlparse(url).hostname or "").lower()
+    except Exception:
+        return False
+    return host.endswith("youtube.com") or host.endswith("youtu.be")
+
+
+def _proxy_service_for_url(url: str) -> Optional[str]:
+    if _is_instagram_url(url):
+        return "instagram"
+    if _is_youtube_url(url):
+        return "youtube"
+    if _is_tiktok_url(url):
+        return "tiktok"
+    if _is_kwai_url(url):
+        return "kwai"
+    return None
+
+
 def _parse_cookies_from_browser(value: str) -> Optional[tuple]:
     parts = [part.strip() for part in (value or "").split(":") if part.strip()]
     if not parts:
@@ -616,7 +641,8 @@ def _get_cached_proxy() -> Optional[str]:
 
 
 def _proxy_for_url(url: str) -> Optional[str]:
-    if not _is_instagram_url(url):
+    service = _proxy_service_for_url(url)
+    if not service or service not in PROXY_FOR_SERVICES:
         return None
     return _get_cached_proxy()
 
