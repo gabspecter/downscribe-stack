@@ -43,7 +43,7 @@ services:
         - "traefik.http.routers.downscribe.rule=Host(`api.downscribe.com`)"
         - "traefik.http.routers.downscribe.entrypoints=websecure"
         - "traefik.http.routers.downscribe.tls=true"
-        - "traefik.http.routers.downscribe.tls.certresolver=letsencrypt"
+        - "traefik.http.routers.downscribe.tls.certresolver=letsencryptresolver"
         - "traefik.http.routers.downscribe.service=downscribe"
         - "traefik.http.services.downscribe.loadbalancer.server.port=8000"
         - "traefik.http.middlewares.downscribe-https.redirectscheme.scheme=https"
