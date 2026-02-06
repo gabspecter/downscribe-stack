@@ -42,12 +42,15 @@ services:
         - "traefik.docker.network=network_public"
         - "traefik.http.routers.downscribe.rule=Host(`api.downscribe.com`)"
         - "traefik.http.routers.downscribe.entrypoints=websecure"
+        - "traefik.http.routers.downscribe.tls=true"
         - "traefik.http.routers.downscribe.tls.certresolver=letsencrypt"
+        - "traefik.http.routers.downscribe.service=downscribe"
         - "traefik.http.services.downscribe.loadbalancer.server.port=8000"
         - "traefik.http.middlewares.downscribe-https.redirectscheme.scheme=https"
         - "traefik.http.routers.downscribe-http.rule=Host(`api.downscribe.com`)"
         - "traefik.http.routers.downscribe-http.entrypoints=web"
         - "traefik.http.routers.downscribe-http.middlewares=downscribe-https"
+        - "traefik.http.routers.downscribe-http.service=downscribe"
     networks:
       - network_public
 
