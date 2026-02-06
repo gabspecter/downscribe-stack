@@ -35,7 +35,7 @@ services:
     ports:
       - "8001:8000"
     volumes:
-      - ./data:/data
+      - downscribe_data:/data
     deploy:
       labels:
         - "traefik.enable=true"
@@ -65,11 +65,14 @@ services:
     ports:
       - "8002:8000"
     volumes:
-      - ./data:/data
+      - downscribe_data:/data
     networks:
       - network_public
 
 networks:
   network_public:
     external: true
+
+volumes:
+  downscribe_data:
 
