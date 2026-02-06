@@ -1209,10 +1209,8 @@ def download(req: DownloadRequest, request: Request):
                     if candidate not in kwai_direct_cache:
                         kwai_direct_cache[candidate] = _kwai_direct_media_url(candidate) or candidate
                     candidate_media = kwai_direct_cache[candidate]
-                if _is_instagram_url(candidate_media):
+                if _is_instagram_url(candidate_media) and _visolix_has_auth():
                     try:
-                        if not _visolix_has_auth():
-                            raise RuntimeError("Credenciais da Visolix não configuradas para Instagram.")
                         info = _visolix_download_instagram(candidate_media, job_dir / "video.mp4")
                         used_url = candidate_media
                         direct_video_downloaded = True
