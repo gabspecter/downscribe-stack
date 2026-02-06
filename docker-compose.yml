@@ -12,10 +12,10 @@ services:
       WHISPER_API_URL: "http://whisper-service:8000/transcribe"
       OUTPUT_DIR: "/data/jobs"
       VISOLIX_DEBUG: "true"
-      VISOLIX_LICENSE_CODE: "B3C41-B2CBD-AB1A1-D4D4C"
-      VISOLIX_CLIENT_NAME: "localhost"
-      VISOLIX_SITE_URL: "http://localhost"
-      VISOLIX_IP: "127.0.0.1"
+      VISOLIX_LICENSE_CODE: "${VISOLIX_LICENSE_CODE}"
+      VISOLIX_CLIENT_NAME: "${VISOLIX_CLIENT_NAME}"
+      VISOLIX_SITE_URL: "${VISOLIX_SITE_URL}"
+      VISOLIX_IP: "${VISOLIX_IP}"
       PROXY_URL: "${PROXY_URL}"
       PROXY_LOGIN: "${PROXY_LOGIN}"
       PROXY_PASSWORD: "${PROXY_PASSWORD}"
@@ -29,6 +29,10 @@ services:
       VISOLIX_BASE_URL: "${VISOLIX_BASE_URL}"
       VISOLIX_PROGRESS_TIMEOUT: "${VISOLIX_PROGRESS_TIMEOUT}"
       VISOLIX_PROGRESS_INTERVAL: "${VISOLIX_PROGRESS_INTERVAL}"
+      REDIS_URL: "${REDIS_URL:-redis://redis_redis:6379/0}"
+      REDIS_PREFIX: "downscribe"
+      DOWNLOAD_TTL_SECONDS: "3600"
+      CLEANUP_INTERVAL_SECONDS: "300"
     ports:
       - "8001:8000"
     volumes:
@@ -47,3 +51,4 @@ services:
       - "8002:8000"
     volumes:
       - ./data:/data
+

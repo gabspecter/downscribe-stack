@@ -5,6 +5,7 @@ import shutil
 import time
 import subprocess
 import tempfile
+import threading
 import uuid
 import json
 import html
@@ -14,6 +15,10 @@ from urllib.parse import urlparse
 
 import requests
 import yt_dlp
+try:
+    import redis
+except Exception:
+    redis = None
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, HttpUrl
@@ -71,6 +76,10 @@ VISOLIX_PROGRESS_INTERVAL = _env_float("VISOLIX_PROGRESS_INTERVAL", 2.0)
 VISOLIX_SITE_URL_FALLBACK = os.getenv("PUBLIC_SITE_URL", "").strip()
 _VISOLIX_LICENSE_STATE = {"checked": False, "ok": False, "message": ""}
 VISOLIX_DEBUG = (os.getenv("VISOLIX_DEBUG", "").strip().lower() in ("1", "true", "yes"))
+REDIS_URL = os.getenv("REDIS_URL", "").strip()
+REDIS_PREFIX = (os.getenv("REDIS_PREFIX", "downscribe").strip() or "downscribe")
+DOWNLOAD_TTL_SECONDS = _env_int("DOWNLOAD_TTL_SECONDS", 3600)
+CLEANUP_INTERVAL_SECONDS = _env_int("CLEANUP_INTERVAL_SECONDS", 300)
 
 TIKTOK_API_HOSTNAMES = [
     h.strip()
@@ -105,7 +114,117 @@ SHORTENER_HOSTS = {
     "kw.ai",
 }
 
+_redis_client = None
+
+
+def _get_redis_client():
+    global _redis_client
+    if _redis_client is not None:
+        return _redis_client if _redis_client is not False else None
+    if not REDIS_URL or redis is None:
+        _redis_client = False
+        return None
+    try:
+        client = redis.Redis.from_url(REDIS_URL, decode_responses=True)
+        client.ping()
+        _redis_client = client
+        return client
+    except Exception:
+        _redis_client = False
+        return None
+
+
+def _redis_job_key(job_id: str) -> str:
+    return f"{REDIS_PREFIX}:job:{job_id}"
+
+
+def _redis_expires_key() -> str:
+    return f"{REDIS_PREFIX}:jobs:expires"
+
+
+def _register_job(job_id: str, job_dir: Path) -> None:
+    ttl = max(60, DOWNLOAD_TTL_SECONDS)
+    expires_at = int(time.time()) + ttl
+    client = _get_redis_client()
+    if not client:
+        return
+    try:
+        client.hset(_redis_job_key(job_id), mapping={"dir": str(job_dir), "expires_at": str(expires_at)})
+        client.expire(_redis_job_key(job_id), ttl)
+        client.zadd(_redis_expires_key(), {job_id: expires_at})
+    except Exception:
+        return
+
+
+def _cleanup_job_dir(path: Path) -> None:
+    shutil.rmtree(path, ignore_errors=True)
+
+
+def _cleanup_redis_jobs(limit: int = 50) -> int:
+    client = _get_redis_client()
+    if not client:
+        return 0
+    now = int(time.time())
+    try:
+        job_ids = client.zrangebyscore(_redis_expires_key(), 0, now, start=0, num=limit)
+    except Exception:
+        return 0
+    deleted = 0
+    for job_id in job_ids:
+        job_dir = None
+        try:
+            job_dir = client.hget(_redis_job_key(job_id), "dir")
+        except Exception:
+            job_dir = None
+        if job_dir:
+            _cleanup_job_dir(Path(job_dir))
+        try:
+            client.delete(_redis_job_key(job_id))
+            client.zrem(_redis_expires_key(), job_id)
+        except Exception:
+            pass
+        deleted += 1
+    return deleted
+
+
+def _cleanup_fs_jobs() -> int:
+    if not OUTPUT_DIR.exists():
+        return 0
+    now = time.time()
+    ttl = max(60, DOWNLOAD_TTL_SECONDS)
+    deleted = 0
+    for child in OUTPUT_DIR.iterdir():
+        if not child.is_dir():
+            continue
+        try:
+            mtime = child.stat().st_mtime
+        except Exception:
+            continue
+        if now - mtime >= ttl:
+            _cleanup_job_dir(child)
+            deleted += 1
+    return deleted
+
+
+def _cleanup_loop() -> None:
+    interval = max(30, CLEANUP_INTERVAL_SECONDS)
+    while True:
+        try:
+            deleted = _cleanup_redis_jobs()
+            if deleted == 0:
+                _cleanup_fs_jobs()
+        except Exception:
+            pass
+        time.sleep(interval)
+
 app = FastAPI(title="Downscribe Downloader Service")
+
+
+@app.on_event("startup")
+def _startup():
+    _ensure_dir(OUTPUT_DIR)
+    thread = threading.Thread(target=_cleanup_loop, daemon=True)
+    thread.start()
 
 
 class TranscriptRequest(BaseModel):
@@ -1212,6 +1331,8 @@ def download(req: DownloadRequest, request: Request):
     if not video_path.exists() or not audio_path.exists():
         shutil.rmtree(job_dir, ignore_errors=True)
         raise HTTPException(status_code=500, detail="Falha ao gerar MP4/MP3.")
+
+    _register_job(job_id, job_dir)
 
     return {
         "job_id": job_id,

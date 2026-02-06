@@ -12,6 +12,7 @@ RUN pip install --no-cache-dir --retries 10 \
     uvicorn[standard] \
     yt-dlp \
     requests \
+    redis \
     "curl_cffi<0.14"
 
 WORKDIR /app
