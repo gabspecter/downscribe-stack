@@ -3,8 +3,7 @@ version: "3.9"
 services:
   downloader-service:
     build: ./downloader-service
-    container_name: downscribe-downloader
-    restart: unless-stopped
+    image: ghcr.io/gabspecter/downscribe-stack/downscribe-downloader:latest
     dns:
       - 1.1.1.1
       - 8.8.8.8
@@ -40,8 +39,7 @@ services:
 
   whisper-service:
     build: ./whisper-service
-    container_name: downscribe-whisper
-    restart: unless-stopped
+    image: ghcr.io/gabspecter/downscribe-stack/downscribe-whisper:latest
     dns:
       - 1.1.1.1
       - 8.8.8.8
