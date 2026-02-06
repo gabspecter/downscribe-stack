@@ -1,0 +1,49 @@
+version: "3.9"
+
+services:
+  downloader-service:
+    build: ./downloader-service
+    container_name: downscribe-downloader
+    restart: unless-stopped
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+    environment:
+      WHISPER_API_URL: "http://whisper-service:8000/transcribe"
+      OUTPUT_DIR: "/data/jobs"
+      VISOLIX_DEBUG: "true"
+      VISOLIX_LICENSE_CODE: "B3C41-B2CBD-AB1A1-D4D4C"
+      VISOLIX_CLIENT_NAME: "localhost"
+      VISOLIX_SITE_URL: "http://localhost"
+      VISOLIX_IP: "127.0.0.1"
+      PROXY_URL: "${PROXY_URL}"
+      PROXY_LOGIN: "${PROXY_LOGIN}"
+      PROXY_PASSWORD: "${PROXY_PASSWORD}"
+      PROXY_HOST: "${PROXY_HOST}"
+      PROXY_LIST_URL: "${PROXY_LIST_URL}"
+      PROXY_CACHE_TTL: "${PROXY_CACHE_TTL}"
+      INSTAGRAM_COOKIE_FILE: "${INSTAGRAM_COOKIE_FILE}"
+      INSTAGRAM_COOKIES_FROM_BROWSER: "${INSTAGRAM_COOKIES_FROM_BROWSER}"
+      INSTAGRAM_COOKIE_HEADER: "${INSTAGRAM_COOKIE_HEADER}"
+      VISOLIX_API_KEY: "${VISOLIX_API_KEY}"
+      VISOLIX_BASE_URL: "${VISOLIX_BASE_URL}"
+      VISOLIX_PROGRESS_TIMEOUT: "${VISOLIX_PROGRESS_TIMEOUT}"
+      VISOLIX_PROGRESS_INTERVAL: "${VISOLIX_PROGRESS_INTERVAL}"
+    ports:
+      - "8001:8000"
+    volumes:
+      - ./data:/data
+
+  whisper-service:
+    build: ./whisper-service
+    container_name: downscribe-whisper
+    restart: unless-stopped
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+    environment:
+      WHISPER_DEFAULT_MODEL: "small"
+    ports:
+      - "8002:8000"
+    volumes:
+      - ./data:/data
