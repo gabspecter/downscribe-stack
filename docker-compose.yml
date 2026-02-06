@@ -36,6 +36,19 @@ services:
       - "8001:8000"
     volumes:
       - ./data:/data
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=network_public"
+      - "traefik.http.routers.downscribe.rule=Host(`api.downscribe.com`)"
+      - "traefik.http.routers.downscribe.entrypoints=websecure"
+      - "traefik.http.routers.downscribe.tls.certresolver=letsencrypt"
+      - "traefik.http.services.downscribe.loadbalancer.server.port=8000"
+      - "traefik.http.middlewares.downscribe-https.redirectscheme.scheme=https"
+      - "traefik.http.routers.downscribe-http.rule=Host(`api.downscribe.com`)"
+      - "traefik.http.routers.downscribe-http.entrypoints=web"
+      - "traefik.http.routers.downscribe-http.middlewares=downscribe-https"
+    networks:
+      - network_public
 
   whisper-service:
     build: ./whisper-service
@@ -49,4 +62,10 @@ services:
       - "8002:8000"
     volumes:
       - ./data:/data
+    networks:
+      - network_public
+
+networks:
+  network_public:
+    external: true
 
