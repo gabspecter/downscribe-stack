@@ -74,7 +74,7 @@ PROXY_LIST_URL = _clean_env_value(os.getenv("PROXY_LIST_URL", ""))
 PROXY_CACHE_TTL = _env_int("PROXY_CACHE_TTL", 300)
 PROXY_FOR_SERVICES = [
     s.strip().lower()
-    for s in os.getenv("PROXY_FOR_SERVICES", "instagram").split(",")
+    for s in os.getenv("PROXY_FOR_SERVICES", "tiktok,kwai").split(",")
     if s.strip()
 ]
 VISOLIX_API_KEY = os.getenv("VISOLIX_API_KEY", "").strip()
@@ -453,8 +453,9 @@ def _resolve_url(url: str) -> str:
 
 
 def _clean_input_url(url: str) -> str:
-    cleaned = str(url).strip().replace("`", "")
-    if len(cleaned) >= 2 and cleaned[0] in ("'", '"') and cleaned[-1] in ("'", '"'):
+    cleaned = str(url or "").strip()
+    cleaned = cleaned.strip(" \t\r\n`'\"´｀“”‘’")
+    if len(cleaned) >= 2 and cleaned[0] in ("`", "'", '"', "´", "｀", "“", "”", "‘", "’") and cleaned[-1] in ("`", "'", '"', "´", "｀", "“", "”", "‘", "’"):
         cleaned = cleaned[1:-1]
     return cleaned.strip()
 
@@ -526,9 +527,9 @@ def _is_youtube_url(url: str) -> bool:
 
 def _proxy_service_for_url(url: str) -> Optional[str]:
     if _is_instagram_url(url):
-        return "instagram"
+        return None
     if _is_youtube_url(url):
-        return "youtube"
+        return None
     if _is_tiktok_url(url):
         return "tiktok"
     if _is_kwai_url(url):
