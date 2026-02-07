@@ -1405,7 +1405,7 @@ def download(req: DownloadRequest, request: Request):
                             print(json.dumps({"event": "visolix_youtube_fallback", "message": str(e)}, ensure_ascii=False))
                         except Exception:
                             pass
-                if _is_instagram_url(candidate_media) and _visolix_has_auth():
+                if _is_instagram_url(candidate_media) and (_visolix_has_auth() or _visolix_rest_enabled()):
                     try:
                         info = _visolix_download_instagram(candidate_media, job_dir / "video.mp4")
                         used_url = candidate_media
