@@ -454,9 +454,11 @@ def _resolve_url(url: str) -> str:
 
 def _clean_input_url(url: str) -> str:
     cleaned = str(url or "").strip()
+    cleaned = cleaned.replace("\u200b", "").replace("\ufeff", "")
     cleaned = cleaned.strip(" \t\r\n`'\"´｀“”‘’")
     if len(cleaned) >= 2 and cleaned[0] in ("`", "'", '"', "´", "｀", "“", "”", "‘", "’") and cleaned[-1] in ("`", "'", '"', "´", "｀", "“", "”", "‘", "’"):
         cleaned = cleaned[1:-1]
+    cleaned = cleaned.replace("`", "").replace("´", "").replace("｀", "").replace("“", "").replace("”", "").replace("‘", "").replace("’", "")
     return cleaned.strip()
 
 
