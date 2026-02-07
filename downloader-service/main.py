@@ -1255,6 +1255,20 @@ def _kwai_direct_media_url(url: str) -> Optional[str]:
 
 def _download_best_audio(tmp_dir: str, url: str):
     resolved_url = _resolve_url(url)
+    if _is_instagram_url(resolved_url) or _is_youtube_url(resolved_url):
+        if not _visolix_rest_enabled():
+            raise HTTPException(status_code=400, detail="Visolix REST não configurado para Instagram/YouTube.")
+        try:
+            video_path = Path(tmp_dir) / "video.mp4"
+            if _is_instagram_url(resolved_url):
+                info = _visolix_download_instagram(resolved_url, video_path)
+            else:
+                info = _visolix_download_youtube(resolved_url, video_path, VISOLIX_REST_YOUTUBE_FORMAT)
+            audio_path = Path(tmp_dir) / "audio.mp3"
+            _ffmpeg_extract_audio_mp3(str(video_path), str(audio_path))
+            return info if isinstance(info, dict) else {}, str(audio_path)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Erro Visolix: {e}") from e
     extractor_args: dict = {
         "youtube": {
             "player_client": ["android", "web"],
@@ -1310,16 +1324,6 @@ def _download_best_audio(tmp_dir: str, url: str):
                 break
             except Exception as e:
                 last_err = e
-        if info is None or downloaded is None:
-            if _is_instagram_url(resolved_url):
-                try:
-                    video_path = Path(tmp_dir) / "video.mp4"
-                    info = _visolix_download_instagram(resolved_url, video_path)
-                    audio_path = Path(tmp_dir) / "audio.mp3"
-                    _ffmpeg_extract_audio_mp3(str(video_path), str(audio_path))
-                    downloaded = str(audio_path)
-                except Exception as e:
-                    last_err = e
         if info is None or downloaded is None:
             raise last_err or RuntimeError("Falha ao baixar áudio.")
     except Exception as e:
@@ -1393,82 +1397,68 @@ def download(req: DownloadRequest, request: Request):
         if TIKTOK_IIDS:
             extractor_args["tiktok"]["iid"] = TIKTOK_IIDS
 
-        ydl_opts_video = {
-            "format": "bestvideo*+bestaudio/best",
-            "merge_output_format": "mp4",
-            "outtmpl": video_outtmpl,
-            "noplaylist": True,
-            "quiet": True,
-            "no_warnings": True,
-            "nocheckcertificate": True,
-            "overwrites": True,
-            "http_headers": _headers_for_url(resolved_url),
-            "http_chunk_size": YTDLP_HTTP_CHUNK_SIZE,
-            "retries": 3,
-            "fragment_retries": 3,
-            "extractor_args": extractor_args,
-        }
-        last_err: Optional[Exception] = None
         used_url: Optional[str] = None
         direct_video_downloaded = False
-        for candidate in candidate_urls:
-            try:
-                candidate_media = candidate
-                if _is_kwai_url(candidate) and not candidate.lower().endswith(".mp4"):
-                    if candidate not in kwai_direct_cache:
-                        kwai_direct_cache[candidate] = _kwai_direct_media_url(candidate) or candidate
-                    candidate_media = kwai_direct_cache[candidate]
-                if _is_youtube_url(candidate_media) and _visolix_rest_enabled():
-                    try:
-                        info = _visolix_download_youtube(candidate_media, job_dir / "video.mp4", VISOLIX_REST_YOUTUBE_FORMAT)
-                        used_url = candidate_media
-                        direct_video_downloaded = True
-                        break
-                    except Exception as e:
-                        try:
-                            print(json.dumps({"event": "visolix_youtube_fallback", "message": str(e)}, ensure_ascii=False))
-                        except Exception:
-                            pass
-                if _is_instagram_url(candidate_media) and (_visolix_has_auth() or _visolix_rest_enabled()):
-                    try:
-                        info = _visolix_download_instagram(candidate_media, job_dir / "video.mp4")
-                        used_url = candidate_media
-                        direct_video_downloaded = True
-                        break
-                    except Exception as e:
-                        try:
-                            print(json.dumps({"event": "visolix_instagram_fallback", "message": str(e)}, ensure_ascii=False))
-                        except Exception:
-                            pass
-                        # fallback to yt-dlp below
-                attempt_opts = dict(ydl_opts_video)
-                if _is_tiktok_url(candidate_media):
-                    tikwm_url = _tikwm_no_watermark_url(candidate_media)
-                    if tikwm_url:
-                        print("tiktok_source=tikwm")
-                        _download_direct_video(tikwm_url, job_dir / "video.mp4")
-                        if not _looks_like_mp4(job_dir / "video.mp4"):
-                            raise RuntimeError("TikWM retornou um arquivo inválido.")
-                        info = {}
-                        used_url = candidate_media
-                        direct_video_downloaded = True
-                        break
-                    raise RuntimeError("Não foi possível obter vídeo sem marca d'água do TikTok.")
-                headers = _headers_for_url(candidate_media)
-                if _is_instagram_url(candidate_media) and req.cookies:
-                    headers["Cookie"] = req.cookies
-                attempt_opts["http_headers"] = headers
-                _apply_network_settings(attempt_opts, candidate_media)
-                impersonate_target = _impersonate_target_for_url(candidate_media)
-                if impersonate_target is not None:
-                    attempt_opts["impersonate"] = impersonate_target
-                info, _ = _extract_with_proxy_retry(attempt_opts, candidate_media, True)
-                used_url = candidate_media
-                break
-            except Exception as e:
-                last_err = e
-        if info is None:
-            raise last_err or RuntimeError("Falha no yt-dlp.")
+
+        if _is_instagram_url(resolved_url) or _is_youtube_url(resolved_url):
+            if not _visolix_rest_enabled():
+                raise RuntimeError("Visolix REST não configurado para Instagram/YouTube.")
+            if _is_instagram_url(resolved_url):
+                info = _visolix_download_instagram(resolved_url, job_dir / "video.mp4")
+            else:
+                info = _visolix_download_youtube(resolved_url, job_dir / "video.mp4", VISOLIX_REST_YOUTUBE_FORMAT)
+            used_url = resolved_url
+            direct_video_downloaded = True
+        else:
+            ydl_opts_video = {
+                "format": "bestvideo*+bestaudio/best",
+                "merge_output_format": "mp4",
+                "outtmpl": video_outtmpl,
+                "noplaylist": True,
+                "quiet": True,
+                "no_warnings": True,
+                "nocheckcertificate": True,
+                "overwrites": True,
+                "http_headers": _headers_for_url(resolved_url),
+                "http_chunk_size": YTDLP_HTTP_CHUNK_SIZE,
+                "retries": 3,
+                "fragment_retries": 3,
+                "extractor_args": extractor_args,
+            }
+            last_err: Optional[Exception] = None
+            for candidate in candidate_urls:
+                try:
+                    candidate_media = candidate
+                    if _is_kwai_url(candidate) and not candidate.lower().endswith(".mp4"):
+                        if candidate not in kwai_direct_cache:
+                            kwai_direct_cache[candidate] = _kwai_direct_media_url(candidate) or candidate
+                        candidate_media = kwai_direct_cache[candidate]
+                    attempt_opts = dict(ydl_opts_video)
+                    if _is_tiktok_url(candidate_media):
+                        tikwm_url = _tikwm_no_watermark_url(candidate_media)
+                        if tikwm_url:
+                            print("tiktok_source=tikwm")
+                            _download_direct_video(tikwm_url, job_dir / "video.mp4")
+                            if not _looks_like_mp4(job_dir / "video.mp4"):
+                                raise RuntimeError("TikWM retornou um arquivo inválido.")
+                            info = {}
+                            used_url = candidate_media
+                            direct_video_downloaded = True
+                            break
+                        raise RuntimeError("Não foi possível obter vídeo sem marca d'água do TikTok.")
+                    headers = _headers_for_url(candidate_media)
+                    attempt_opts["http_headers"] = headers
+                    _apply_network_settings(attempt_opts, candidate_media)
+                    impersonate_target = _impersonate_target_for_url(candidate_media)
+                    if impersonate_target is not None:
+                        attempt_opts["impersonate"] = impersonate_target
+                    info, _ = _extract_with_proxy_retry(attempt_opts, candidate_media, True)
+                    used_url = candidate_media
+                    break
+                except Exception as e:
+                    last_err = e
+            if info is None:
+                raise last_err or RuntimeError("Falha no yt-dlp.")
 
         if direct_video_downloaded:
             _ffmpeg_extract_audio_mp3(str(job_dir / "video.mp4"), str(job_dir / "audio.mp3"))
