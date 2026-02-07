@@ -889,6 +889,14 @@ def _visolix_rest_post(path: str, payload: dict) -> dict:
     body = dict(payload)
     body["key"] = VISOLIX_REST_API_KEY
     try:
+        try:
+            print(json.dumps({
+                "visolix_rest_event": "request",
+                "path": path,
+                "url": api_url,
+            }, ensure_ascii=False))
+        except Exception:
+            pass
         r = requests.post(api_url, json=body, timeout=30)
     except Exception as e:
         raise RuntimeError(f"Visolix REST falhou: {e}") from e
@@ -901,6 +909,15 @@ def _visolix_rest_post(path: str, payload: dict) -> dict:
         data = r.json()
     except Exception as e:
         raise RuntimeError(f"Visolix REST retornou JSON inválido: {e}") from e
+    try:
+        print(json.dumps({
+            "visolix_rest_event": "response",
+            "path": path,
+            "status_code": r.status_code,
+            "ok": data.get("status") if isinstance(data, dict) else None,
+        }, ensure_ascii=False))
+    except Exception:
+        pass
     if not isinstance(data, dict):
         raise RuntimeError("Visolix REST retornou resposta inválida.")
     return data
@@ -1341,7 +1358,14 @@ def get_file(job_id: str, filename: str):
 def download(req: DownloadRequest, request: Request):
     resolved_url = _resolve_url(str(req.url))
     try:
-        print(json.dumps({"event": "download_start", "url": str(req.url), "resolved_url": resolved_url, "cookies_provided": bool(req.cookies)}, ensure_ascii=False))
+        print(json.dumps({
+            "event": "download_start",
+            "url": str(req.url),
+            "resolved_url": resolved_url,
+            "cookies_provided": bool(req.cookies),
+            "visolix_rest_enabled": _visolix_rest_enabled(),
+            "visolix_has_auth": _visolix_has_auth(),
+        }, ensure_ascii=False))
     except Exception:
         pass
     candidate_urls = _candidate_urls(resolved_url)
