@@ -1254,20 +1254,22 @@ def _kwai_direct_media_url(url: str) -> Optional[str]:
 
 def _download_best_audio(tmp_dir: str, url: str):
     resolved_url = _resolve_url(_clean_input_url(url))
+    visolix_error: Optional[str] = None
     if _is_instagram_url(resolved_url) or _is_youtube_url(resolved_url):
-        if not _visolix_rest_enabled():
-            raise HTTPException(status_code=400, detail="Visolix REST não configurado para Instagram/YouTube.")
-        try:
-            video_path = Path(tmp_dir) / "video.mp4"
-            if _is_instagram_url(resolved_url):
-                info = _visolix_download_instagram(resolved_url, video_path)
-            else:
-                info = _visolix_download_youtube(resolved_url, video_path, VISOLIX_REST_YOUTUBE_FORMAT)
-            audio_path = Path(tmp_dir) / "audio.mp3"
-            _ffmpeg_extract_audio_mp3(str(video_path), str(audio_path))
-            return info if isinstance(info, dict) else {}, str(audio_path)
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Erro Visolix: {e}") from e
+        if _visolix_rest_enabled():
+            try:
+                video_path = Path(tmp_dir) / "video.mp4"
+                if _is_instagram_url(resolved_url):
+                    info = _visolix_download_instagram(resolved_url, video_path)
+                else:
+                    info = _visolix_download_youtube(resolved_url, video_path, VISOLIX_REST_YOUTUBE_FORMAT)
+                audio_path = Path(tmp_dir) / "audio.mp3"
+                _ffmpeg_extract_audio_mp3(str(video_path), str(audio_path))
+                return info if isinstance(info, dict) else {}, str(audio_path)
+            except Exception as e:
+                visolix_error = str(e)
+        else:
+            visolix_error = "Visolix REST não configurado."
     extractor_args: dict = {
         "youtube": {
             "player_client": ["android", "web"],
@@ -1326,7 +1328,8 @@ def _download_best_audio(tmp_dir: str, url: str):
         if info is None or downloaded is None:
             raise last_err or RuntimeError("Falha ao baixar áudio.")
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Erro ao baixar áudio: {e}") from e
+        suffix = f" Visolix: {visolix_error}" if visolix_error else ""
+        raise HTTPException(status_code=400, detail=f"Erro ao baixar áudio: {e}{suffix}") from e
 
     if not os.path.exists(downloaded):
         candidates = list(Path(tmp_dir).glob("audio.*"))
@@ -1399,17 +1402,22 @@ def download(req: DownloadRequest, request: Request):
 
         used_url: Optional[str] = None
         direct_video_downloaded = False
+        visolix_error: Optional[str] = None
 
         if _is_instagram_url(resolved_url) or _is_youtube_url(resolved_url):
-            if not _visolix_rest_enabled():
-                raise RuntimeError("Visolix REST não configurado para Instagram/YouTube.")
-            if _is_instagram_url(resolved_url):
-                info = _visolix_download_instagram(resolved_url, job_dir / "video.mp4")
+            if _visolix_rest_enabled():
+                try:
+                    if _is_instagram_url(resolved_url):
+                        info = _visolix_download_instagram(resolved_url, job_dir / "video.mp4")
+                    else:
+                        info = _visolix_download_youtube(resolved_url, job_dir / "video.mp4", VISOLIX_REST_YOUTUBE_FORMAT)
+                    used_url = resolved_url
+                    direct_video_downloaded = True
+                except Exception as e:
+                    visolix_error = str(e)
             else:
-                info = _visolix_download_youtube(resolved_url, job_dir / "video.mp4", VISOLIX_REST_YOUTUBE_FORMAT)
-            used_url = resolved_url
-            direct_video_downloaded = True
-        else:
+                visolix_error = "Visolix REST não configurado."
+        if not direct_video_downloaded:
             ydl_opts_video = {
                 "format": "bestvideo*+bestaudio/best",
                 "merge_output_format": "mp4",
@@ -1458,6 +1466,9 @@ def download(req: DownloadRequest, request: Request):
                 except Exception as e:
                     last_err = e
             if info is None:
+                if visolix_error:
+                    base_err = str(last_err) if last_err else "Falha no yt-dlp."
+                    raise RuntimeError(f"{base_err} Visolix: {visolix_error}")
                 raise last_err or RuntimeError("Falha no yt-dlp.")
 
         if direct_video_downloaded:
