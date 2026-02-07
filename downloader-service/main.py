@@ -44,7 +44,17 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
-WHISPER_API_URL = os.getenv("WHISPER_API_URL", "http://whisper-service:8000/transcribe")
+def _clean_env_value(value: Optional[str]) -> str:
+    if value is None:
+        return ""
+    cleaned = str(value).strip()
+    if len(cleaned) >= 2 and cleaned[0] in ("`", "'", '"') and cleaned[-1] in ("`", "'", '"'):
+        cleaned = cleaned[1:-1]
+    cleaned = cleaned.strip().replace("`", "")
+    return cleaned
+
+
+WHISPER_API_URL = _clean_env_value(os.getenv("WHISPER_API_URL", "http://whisper-service:8000/transcribe"))
 OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", "/data/jobs"))
 YTDLP_COOKIE_FILE = os.getenv("YTDLP_COOKIE_FILE", "/data/cookies.txt")
 YTDLP_HTTP_CHUNK_SIZE = _env_int("YTDLP_HTTP_CHUNK_SIZE", 10 * 1024 * 1024)
@@ -56,11 +66,11 @@ DOWNLOADER_USER_AGENT = os.getenv(
 INSTAGRAM_COOKIE_FILE = os.getenv("INSTAGRAM_COOKIE_FILE", "").strip()
 INSTAGRAM_COOKIES_FROM_BROWSER = os.getenv("INSTAGRAM_COOKIES_FROM_BROWSER", "").strip()
 INSTAGRAM_COOKIE_HEADER = os.getenv("INSTAGRAM_COOKIE_HEADER", "").strip()
-PROXY_URL = os.getenv("PROXY_URL", "").strip()
+PROXY_URL = _clean_env_value(os.getenv("PROXY_URL", ""))
 PROXY_LOGIN = os.getenv("PROXY_LOGIN", "").strip()
 PROXY_PASSWORD = os.getenv("PROXY_PASSWORD", "").strip()
-PROXY_HOST = os.getenv("PROXY_HOST", "").strip()
-PROXY_LIST_URL = os.getenv("PROXY_LIST_URL", "").strip()
+PROXY_HOST = _clean_env_value(os.getenv("PROXY_HOST", ""))
+PROXY_LIST_URL = _clean_env_value(os.getenv("PROXY_LIST_URL", ""))
 PROXY_CACHE_TTL = _env_int("PROXY_CACHE_TTL", 300)
 PROXY_FOR_SERVICES = [
     s.strip().lower()
@@ -70,18 +80,18 @@ PROXY_FOR_SERVICES = [
 VISOLIX_API_KEY = os.getenv("VISOLIX_API_KEY", "").strip()
 VISOLIX_LICENSE_CODE = os.getenv("VISOLIX_LICENSE_CODE", "").strip()
 VISOLIX_CLIENT_NAME = os.getenv("VISOLIX_CLIENT_NAME", "").strip()
-VISOLIX_SITE_URL = os.getenv("VISOLIX_SITE_URL", "").strip()
+VISOLIX_SITE_URL = _clean_env_value(os.getenv("VISOLIX_SITE_URL", ""))
 VISOLIX_IP = os.getenv("VISOLIX_IP", "").strip()
-_visolix_base_raw = os.getenv("VISOLIX_BASE_URL", "").strip()
+_visolix_base_raw = _clean_env_value(os.getenv("VISOLIX_BASE_URL", ""))
 VISOLIX_BASE_URL = (_visolix_base_raw or "https://developers.visolix.com").rstrip("/")
-VISOLIX_LICENSE_URL = os.getenv("VISOLIX_LICENSE_URL", "https://visolix.com/fastapi/license/").strip().rstrip("/")
+VISOLIX_LICENSE_URL = _clean_env_value(os.getenv("VISOLIX_LICENSE_URL", "https://visolix.com/fastapi/license/")).rstrip("/")
 VISOLIX_LICENSE_ACTION = os.getenv("VISOLIX_LICENSE_ACTION", "visolix_activate").strip()
 VISOLIX_PROGRESS_TIMEOUT = _env_int("VISOLIX_PROGRESS_TIMEOUT", 120)
 VISOLIX_PROGRESS_INTERVAL = _env_float("VISOLIX_PROGRESS_INTERVAL", 2.0)
 VISOLIX_SITE_URL_FALLBACK = os.getenv("PUBLIC_SITE_URL", "").strip()
 _VISOLIX_LICENSE_STATE = {"checked": False, "ok": False, "message": ""}
 VISOLIX_DEBUG = (os.getenv("VISOLIX_DEBUG", "").strip().lower() in ("1", "true", "yes"))
-VISOLIX_REST_API_URL = os.getenv("VISOLIX_REST_API_URL", "").strip().rstrip("/")
+VISOLIX_REST_API_URL = _clean_env_value(os.getenv("VISOLIX_REST_API_URL", "")).rstrip("/")
 VISOLIX_REST_API_KEY = os.getenv("VISOLIX_REST_API_KEY", "").strip()
 VISOLIX_REST_YOUTUBE_FORMAT = os.getenv("VISOLIX_REST_YOUTUBE_FORMAT", "720").strip()
 REDIS_URL = os.getenv("REDIS_URL", "").strip()
@@ -440,6 +450,13 @@ def _resolve_url(url: str) -> str:
         return final_url
     except Exception:
         return url
+
+
+def _clean_input_url(url: str) -> str:
+    cleaned = str(url).strip().replace("`", "")
+    if len(cleaned) >= 2 and cleaned[0] in ("'", '"') and cleaned[-1] in ("'", '"'):
+        cleaned = cleaned[1:-1]
+    return cleaned.strip()
 
 
 def _normalize_title(value: Optional[str]) -> Optional[str]:
@@ -989,48 +1006,24 @@ def _visolix_rest_progress_id(payload: dict) -> Optional[str]:
 
 
 def _visolix_download_instagram(url: str, output_path: Path) -> dict:
-    if _visolix_rest_enabled():
-        payload = _visolix_rest_video_data(url)
-        link = _visolix_rest_pick_link(payload)
-        download_url = None
-        if link:
-            download_url = link.get("url") or link.get("download_url")
-        if not download_url:
-            download_url = payload.get("download_url")
-        if not download_url:
-            progress_id = _visolix_rest_progress_id(payload)
-            if progress_id:
-                progress = _visolix_rest_wait_progress(progress_id)
-                download_url = progress.get("download_url")
-        if not download_url:
-            raise RuntimeError("Visolix REST não retornou URL de download.")
-        _download_direct_video(str(download_url), output_path)
-        info = payload.get("data") if isinstance(payload.get("data"), dict) else {}
-        return info if isinstance(info, dict) else {}
-    payload = _visolix_request_download("instagram", url)
-    info = payload.get("info") if isinstance(payload, dict) else {}
+    if not _visolix_rest_enabled():
+        raise RuntimeError("Visolix REST não configurado.")
+    payload = _visolix_rest_video_data(url)
+    link = _visolix_rest_pick_link(payload)
     download_url = None
-    if isinstance(payload, dict):
-        if payload.get("download_url"):
-            download_url = payload.get("download_url")
-        elif payload.get("id"):
-            progress = _visolix_wait_progress(str(payload.get("id")))
-            if isinstance(progress, dict):
-                download_url = progress.get("download_url")
-        elif isinstance(payload.get("media"), list):
-            media_items = [m for m in payload.get("media") if isinstance(m, dict)]
-            preferred = None
-            for item in media_items:
-                if (item.get("fileType") or "").lower() == "video/mp4":
-                    preferred = item
-                    break
-            if preferred is None and media_items:
-                preferred = media_items[0]
-            if preferred:
-                download_url = preferred.get("url")
+    if link:
+        download_url = link.get("url") or link.get("download_url")
     if not download_url:
-        raise RuntimeError("Visolix não retornou URL de download.")
+        download_url = payload.get("download_url")
+    if not download_url:
+        progress_id = _visolix_rest_progress_id(payload)
+        if progress_id:
+            progress = _visolix_rest_wait_progress(progress_id)
+            download_url = progress.get("download_url")
+    if not download_url:
+        raise RuntimeError("Visolix REST não retornou URL de download.")
     _download_direct_video(str(download_url), output_path)
+    info = payload.get("data") if isinstance(payload.get("data"), dict) else {}
     return info if isinstance(info, dict) else {}
 
 
@@ -1254,7 +1247,7 @@ def _kwai_direct_media_url(url: str) -> Optional[str]:
 
 
 def _download_best_audio(tmp_dir: str, url: str):
-    resolved_url = _resolve_url(url)
+    resolved_url = _resolve_url(_clean_input_url(url))
     if _is_instagram_url(resolved_url) or _is_youtube_url(resolved_url):
         if not _visolix_rest_enabled():
             raise HTTPException(status_code=400, detail="Visolix REST não configurado para Instagram/YouTube.")
@@ -1360,11 +1353,12 @@ def get_file(job_id: str, filename: str):
 
 @app.post("/download")
 def download(req: DownloadRequest, request: Request):
-    resolved_url = _resolve_url(str(req.url))
+    raw_url = _clean_input_url(str(req.url))
+    resolved_url = _resolve_url(raw_url)
     try:
         print(json.dumps({
             "event": "download_start",
-            "url": str(req.url),
+            "url": raw_url,
             "resolved_url": resolved_url,
             "cookies_provided": bool(req.cookies),
             "visolix_rest_enabled": _visolix_rest_enabled(),
@@ -1553,9 +1547,10 @@ def download(req: DownloadRequest, request: Request):
 def transcript(req: TranscriptRequest):
     tmp_dir = tempfile.mkdtemp(prefix="downscribe_")
     wav_path = os.path.join(tmp_dir, "audio.wav")
+    raw_url = _clean_input_url(str(req.url))
 
     try:
-        info, audio_path = _download_best_audio(tmp_dir, str(req.url))
+        info, audio_path = _download_best_audio(tmp_dir, raw_url)
         _ffmpeg_to_wav(audio_path, wav_path)
 
         try:
@@ -1580,10 +1575,10 @@ def transcript(req: TranscriptRequest):
                 transcript_text = result.get("text", "") or ""
             except Exception:
                 transcript_text = transcript_text or ""
-        if not transcript_text.strip() and _is_instagram_url(str(req.url)):
+        if not transcript_text.strip() and _is_instagram_url(raw_url):
             try:
                 video_path = Path(tmp_dir) / "instagram_video.mp4"
-                fallback_info = _visolix_download_instagram(str(req.url), video_path)
+                fallback_info = _visolix_download_instagram(raw_url, video_path)
                 if isinstance(fallback_info, dict):
                     if not info.get("title") and fallback_info.get("title"):
                         info["title"] = fallback_info.get("title")
@@ -1603,7 +1598,7 @@ def transcript(req: TranscriptRequest):
                 transcript_text = transcript_text or ""
 
         payload = {
-            "source_url": str(req.url),
+            "source_url": raw_url,
             "title": info.get("title"),
             "duration": info.get("duration"),
             "transcript": transcript_text,
