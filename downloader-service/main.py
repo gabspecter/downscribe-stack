@@ -459,6 +459,9 @@ def _clean_input_url(url: str) -> str:
     if len(cleaned) >= 2 and cleaned[0] in ("`", "'", '"', "´", "｀", "“", "”", "‘", "’") and cleaned[-1] in ("`", "'", '"', "´", "｀", "“", "”", "‘", "’"):
         cleaned = cleaned[1:-1]
     cleaned = cleaned.replace("`", "").replace("´", "").replace("｀", "").replace("“", "").replace("”", "").replace("‘", "").replace("’", "")
+    m = re.search(r"(https?://[^\s\"'`<>]+)", cleaned)
+    if m:
+        return m.group(1).strip()
     return cleaned.strip()
 
 
