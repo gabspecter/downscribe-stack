@@ -81,6 +81,9 @@ VISOLIX_PROGRESS_INTERVAL = _env_float("VISOLIX_PROGRESS_INTERVAL", 2.0)
 VISOLIX_SITE_URL_FALLBACK = os.getenv("PUBLIC_SITE_URL", "").strip()
 _VISOLIX_LICENSE_STATE = {"checked": False, "ok": False, "message": ""}
 VISOLIX_DEBUG = (os.getenv("VISOLIX_DEBUG", "").strip().lower() in ("1", "true", "yes"))
+VISOLIX_REST_API_URL = os.getenv("VISOLIX_REST_API_URL", "").strip().rstrip("/")
+VISOLIX_REST_API_KEY = os.getenv("VISOLIX_REST_API_KEY", "").strip()
+VISOLIX_REST_YOUTUBE_FORMAT = os.getenv("VISOLIX_REST_YOUTUBE_FORMAT", "720").strip()
 REDIS_URL = os.getenv("REDIS_URL", "").strip()
 REDIS_PREFIX = (os.getenv("REDIS_PREFIX", "downscribe").strip() or "downscribe")
 DOWNLOAD_TTL_SECONDS = _env_int("DOWNLOAD_TTL_SECONDS", 3600)
@@ -658,6 +661,29 @@ def _apply_network_settings(ydl_opts: dict, url: str) -> None:
         ydl_opts["proxy"] = proxy
 
 
+def _is_proxy_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return "proxy" in msg or "tunnel connection failed" in msg
+
+
+def _extract_with_proxy_retry(attempt_opts: dict, url: str, download: bool, prepare_filename: bool = False) -> tuple[dict, Optional[str]]:
+    proxy = attempt_opts.get("proxy")
+    try:
+        with yt_dlp.YoutubeDL(attempt_opts) as ydl:
+            info = ydl.extract_info(url, download=download)
+            filename = ydl.prepare_filename(info) if prepare_filename else None
+        return info, filename
+    except Exception as e:
+        if proxy and _is_proxy_error(e):
+            retry_opts = dict(attempt_opts)
+            retry_opts.pop("proxy", None)
+            with yt_dlp.YoutubeDL(retry_opts) as ydl:
+                info = ydl.extract_info(url, download=download)
+                filename = ydl.prepare_filename(info) if prepare_filename else None
+            return info, filename
+        raise
+
+
 def _visolix_has_auth() -> bool:
     if VISOLIX_API_KEY:
         return True
@@ -854,7 +880,116 @@ def _visolix_wait_progress(download_id: str) -> dict:
     raise RuntimeError("Visolix não finalizou o download a tempo.")
 
 
+def _visolix_rest_enabled() -> bool:
+    return bool(VISOLIX_REST_API_URL and VISOLIX_REST_API_KEY)
+
+
+def _visolix_rest_post(path: str, payload: dict) -> dict:
+    api_url = f"{VISOLIX_REST_API_URL}/{path.lstrip('/')}"
+    body = dict(payload)
+    body["key"] = VISOLIX_REST_API_KEY
+    try:
+        r = requests.post(api_url, json=body, timeout=30)
+    except Exception as e:
+        raise RuntimeError(f"Visolix REST falhou: {e}") from e
+    if r.status_code >= 400:
+        detail = (r.text or "").strip()
+        if detail:
+            raise RuntimeError(f"Visolix REST falhou ({r.status_code}): {detail}")
+        raise RuntimeError(f"Visolix REST falhou ({r.status_code}).")
+    try:
+        data = r.json()
+    except Exception as e:
+        raise RuntimeError(f"Visolix REST retornou JSON inválido: {e}") from e
+    if not isinstance(data, dict):
+        raise RuntimeError("Visolix REST retornou resposta inválida.")
+    return data
+
+
+def _visolix_rest_video_data(url: str, fmt: Optional[str] = None) -> dict:
+    payload: dict = {"url": url}
+    if fmt:
+        payload["format"] = fmt
+    data = _visolix_rest_post("video-data", payload)
+    if data.get("status") in (1, True):
+        return data
+    message = data.get("message") or "Visolix REST não retornou sucesso."
+    raise RuntimeError(message)
+
+
+def _visolix_rest_wait_progress(progress_id: str) -> dict:
+    deadline = time.time() + max(5, VISOLIX_PROGRESS_TIMEOUT)
+    last_data: Optional[dict] = None
+    while time.time() < deadline:
+        data = _visolix_rest_post("progress-check", {"id": progress_id})
+        if isinstance(data, dict):
+            last_data = data
+            if data.get("success") in (1, True):
+                return data
+        time.sleep(max(0.5, VISOLIX_PROGRESS_INTERVAL))
+    if isinstance(last_data, dict):
+        text = last_data.get("text") or last_data.get("message") or "Visolix não finalizou o download a tempo."
+        raise RuntimeError(text)
+    raise RuntimeError("Visolix não finalizou o download a tempo.")
+
+
+def _visolix_rest_pick_link(payload: dict, fmt: Optional[str] = None) -> Optional[dict]:
+    links: list = []
+    if isinstance(payload.get("data"), dict) and isinstance(payload["data"].get("links"), list):
+        links = payload["data"]["links"]
+    elif isinstance(payload.get("links"), list):
+        links = payload["links"]
+    candidates: list[dict] = []
+    for link in links:
+        if not isinstance(link, dict):
+            continue
+        url = link.get("url") or link.get("download_url")
+        if not url or url == "#":
+            continue
+        candidates.append(link)
+    if fmt:
+        for link in candidates:
+            quality = str(link.get("quality") or "")
+            if fmt in quality:
+                return link
+    for link in candidates:
+        if (link.get("type") or "").lower() == "video":
+            return link
+    return candidates[0] if candidates else None
+
+
+def _visolix_rest_progress_id(payload: dict) -> Optional[str]:
+    if not isinstance(payload, dict):
+        return None
+    for key in ("id", "progress_id", "progressId"):
+        if payload.get(key):
+            return str(payload.get(key))
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    for key in ("id", "progress_id", "progressId"):
+        if data.get(key):
+            return str(data.get(key))
+    return None
+
+
 def _visolix_download_instagram(url: str, output_path: Path) -> dict:
+    if _visolix_rest_enabled():
+        payload = _visolix_rest_video_data(url)
+        link = _visolix_rest_pick_link(payload)
+        download_url = None
+        if link:
+            download_url = link.get("url") or link.get("download_url")
+        if not download_url:
+            download_url = payload.get("download_url")
+        if not download_url:
+            progress_id = _visolix_rest_progress_id(payload)
+            if progress_id:
+                progress = _visolix_rest_wait_progress(progress_id)
+                download_url = progress.get("download_url")
+        if not download_url:
+            raise RuntimeError("Visolix REST não retornou URL de download.")
+        _download_direct_video(str(download_url), output_path)
+        info = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+        return info if isinstance(info, dict) else {}
     payload = _visolix_request_download("instagram", url)
     info = payload.get("info") if isinstance(payload, dict) else {}
     download_url = None
@@ -880,6 +1015,32 @@ def _visolix_download_instagram(url: str, output_path: Path) -> dict:
         raise RuntimeError("Visolix não retornou URL de download.")
     _download_direct_video(str(download_url), output_path)
     return info if isinstance(info, dict) else {}
+
+
+def _visolix_download_youtube(url: str, output_path: Path, fmt: Optional[str] = None) -> dict:
+    if not _visolix_rest_enabled():
+        raise RuntimeError("Visolix REST não configurado.")
+    payload = _visolix_rest_video_data(url, fmt)
+    link = _visolix_rest_pick_link(payload, fmt)
+    download_url = None
+    if link:
+        download_url = link.get("url") or link.get("download_url")
+    if not download_url:
+        download_url = payload.get("download_url")
+    if not download_url:
+        progress_id = _visolix_rest_progress_id(payload)
+        if progress_id:
+            progress = _visolix_rest_wait_progress(progress_id)
+            download_url = progress.get("download_url")
+    if not download_url:
+        raise RuntimeError("Visolix REST não retornou URL de download.")
+    _download_direct_video(str(download_url), output_path)
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    info: dict = {}
+    if isinstance(data, dict):
+        info["title"] = data.get("title") or data.get("name")
+        info["thumbnail"] = data.get("thumb") or data.get("thumbnail") or data.get("image")
+    return info
 
 
 def _snaptik_decode_js_string(value: str) -> str:
@@ -1123,9 +1284,7 @@ def _download_best_audio(tmp_dir: str, url: str):
                 impersonate_target = _impersonate_target_for_url(candidate_media)
                 if impersonate_target is not None:
                     attempt_opts["impersonate"] = impersonate_target
-                with yt_dlp.YoutubeDL(attempt_opts) as ydl:
-                    info = ydl.extract_info(candidate_media, download=True)
-                    downloaded = ydl.prepare_filename(info)
+                info, downloaded = _extract_with_proxy_retry(attempt_opts, candidate_media, True, True)
                 if isinstance(info, dict) and not info.get("title"):
                     if page_title_cache is None:
                         page_title_cache = _fetch_page_title(resolved_url) or _fetch_page_title(candidate)
@@ -1235,6 +1394,17 @@ def download(req: DownloadRequest, request: Request):
                     if candidate not in kwai_direct_cache:
                         kwai_direct_cache[candidate] = _kwai_direct_media_url(candidate) or candidate
                     candidate_media = kwai_direct_cache[candidate]
+                if _is_youtube_url(candidate_media) and _visolix_rest_enabled():
+                    try:
+                        info = _visolix_download_youtube(candidate_media, job_dir / "video.mp4", VISOLIX_REST_YOUTUBE_FORMAT)
+                        used_url = candidate_media
+                        direct_video_downloaded = True
+                        break
+                    except Exception as e:
+                        try:
+                            print(json.dumps({"event": "visolix_youtube_fallback", "message": str(e)}, ensure_ascii=False))
+                        except Exception:
+                            pass
                 if _is_instagram_url(candidate_media) and _visolix_has_auth():
                     try:
                         info = _visolix_download_instagram(candidate_media, job_dir / "video.mp4")
@@ -1268,8 +1438,7 @@ def download(req: DownloadRequest, request: Request):
                 impersonate_target = _impersonate_target_for_url(candidate_media)
                 if impersonate_target is not None:
                     attempt_opts["impersonate"] = impersonate_target
-                with yt_dlp.YoutubeDL(attempt_opts) as ydl:
-                    info = ydl.extract_info(candidate_media, download=True)
+                info, _ = _extract_with_proxy_retry(attempt_opts, candidate_media, True)
                 used_url = candidate_media
                 break
             except Exception as e:
@@ -1321,8 +1490,7 @@ def download(req: DownloadRequest, request: Request):
                     impersonate_target = _impersonate_target_for_url(candidate_media)
                     if impersonate_target is not None:
                         attempt_opts["impersonate"] = impersonate_target
-                    with yt_dlp.YoutubeDL(attempt_opts) as ydl:
-                        ydl.extract_info(candidate_media, download=True)
+                    _extract_with_proxy_retry(attempt_opts, candidate_media, True)
                     ok = True
                     break
                 except Exception as e:
