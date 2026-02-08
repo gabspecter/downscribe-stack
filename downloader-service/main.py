@@ -91,7 +91,12 @@ VISOLIX_PROGRESS_INTERVAL = _env_float("VISOLIX_PROGRESS_INTERVAL", 2.0)
 VISOLIX_SITE_URL_FALLBACK = os.getenv("PUBLIC_SITE_URL", "").strip()
 _VISOLIX_LICENSE_STATE = {"checked": False, "ok": False, "message": ""}
 VISOLIX_DEBUG = (os.getenv("VISOLIX_DEBUG", "").strip().lower() in ("1", "true", "yes"))
-VISOLIX_REST_API_URL = _clean_env_value(os.getenv("VISOLIX_REST_API_URL", "")).rstrip("/")
+_visolix_rest_raw = _clean_env_value(os.getenv("VISOLIX_REST_API_URL", "")).rstrip("/")
+if _visolix_rest_raw:
+    VISOLIX_REST_API_URL = _visolix_rest_raw
+else:
+    _visolix_site_base = (VISOLIX_SITE_URL or VISOLIX_SITE_URL_FALLBACK).strip().rstrip("/")
+    VISOLIX_REST_API_URL = f"{_visolix_site_base}/wp-json/visolix/api" if _visolix_site_base else ""
 VISOLIX_REST_API_KEY = _clean_env_value(os.getenv("VISOLIX_REST_API_KEY", "")).strip()
 VISOLIX_REST_YOUTUBE_FORMAT = os.getenv("VISOLIX_REST_YOUTUBE_FORMAT", "720").strip()
 REDIS_URL = os.getenv("REDIS_URL", "").strip()
